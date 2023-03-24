@@ -1,0 +1,443 @@
+"""Training Callbacks for training monitoring (inspired from 
+https://github.com/huggingface/transformers/blob/master/src/transformers/trainer_callback.py)"""
+
+import importlib
+import logging
+
+import numpy as np
+from tqdm.auto import tqdm
+import os
+import matplotlib.pyplot as plt
+import torch
+
+from .base_trainer.base_training_config import BaseTrainerConfig
+
+logger = logging.getLogger(__name__)
+
+
+def wandb_is_available():
+    return importlib.util.find_spec("wandb") is not None
+
+
+def mlflow_is_available():
+    return importlib.util.find_spec("mlflow") is not None
+
+
+def rename_logs(logs):
+    train_prefix = "train_"
+    eval_prefix = "eval_"
+
+    clean_logs = {}
+
+    for metric_name in logs.keys():
+        if metric_name.startswith(train_prefix):
+            clean_logs[metric_name.replace(train_prefix, "train/")] = logs[metric_name]
+
+        if metric_name.startswith(eval_prefix):
+            clean_logs[metric_name.replace(eval_prefix, "eval/")] = logs[metric_name]
+
+    return clean_logs
+
+
+class TrainingCallback:
+    """
+    Base class for creating training callbacks"""
+
+    def on_init_end(self, training_config: BaseTrainerConfig, **kwargs):
+        """
+        Event called at the end of the initialization of the [`Trainer`].
+        """
+
+    def on_train_begin(self, training_config: BaseTrainerConfig, **kwargs):
+        """
+        Event called at the beginning of training.
+        """
+
+    def on_train_end(self, training_config: BaseTrainerConfig, **kwargs):
+        """
+        Event called at the end of training.
+        """
+
+    def on_epoch_begin(self, training_config: BaseTrainerConfig, **kwargs):
+        """
+        Event called at the beginning of an epoch.
+        """
+
+    def on_epoch_end(self, training_config: BaseTrainerConfig, **kwargs):
+        """
+        Event called at the end of an epoch.
+        """
+
+    def on_train_step_begin(self, training_config: BaseTrainerConfig, **kwargs):
+        """
+        Event called at the beginning of a training step.
+        """
+
+    def on_train_step_end(self, training_config: BaseTrainerConfig, **kwargs):
+        """
+        Event called at the end of a training step.
+        """
+
+    def on_eval_step_begin(self, training_config: BaseTrainerConfig, **kwargs):
+        """
+        Event called at the beginning of a evaluation step.
+        """
+
+    def on_eval_step_end(self, training_config: BaseTrainerConfig, **kwargs):
+        """
+        Event called at the end of a evaluation step.
+        """
+
+    def on_evaluate(self, training_config: BaseTrainerConfig, **kwargs):
+        """
+        Event called after an evaluation phase.
+        """
+
+    def on_prediction_step(self, training_config: BaseTrainerConfig, **kwargs):
+        """
+        Event called after a prediction phase.
+        """
+
+    def on_save(self, training_config: BaseTrainerConfig, **kwargs):
+        """
+        Event called after a checkpoint save.
+        """
+
+    def on_log(self, training_config: BaseTrainerConfig, logs, **kwargs):
+        """
+        Event called after logging the last logs.
+        """
+
+
+class CallbackHandler:
+    """
+    Class to handle list of Callback
+    """
+
+    def __init__(self, callbacks, model, optimizer, scheduler):
+        self.callbacks = []
+        for cb in callbacks:
+            self.add_callback(cb)
+        self.model = model
+        self.optimizer = optimizer
+        self.scheduler = scheduler
+
+    def add_callback(self, callback):
+        cb = callback() if isinstance(callback, type) else callback
+        cb_class = callback if isinstance(callback, type) else callback.__class__
+        if cb_class in [c.__class__ for c in self.callbacks]:
+            logger.warning(
+                f"You are adding a {cb_class} to the callbacks but there one is already used."
+                f" The current list of callbacks is\n: {self.callback_list}"
+            )
+        self.callbacks.append(cb)
+
+    @property
+    def callback_list(self):
+        return "\n".join(cb.__class__.__name__ for cb in self.callbacks)
+
+    @property
+    def callback_list(self):
+        return "\n".join(cb.__class__.__name__ for cb in self.callbacks)
+
+    def on_init_end(self, training_config: BaseTrainerConfig, **kwargs):
+        self.call_event("on_init_end", training_config, **kwargs)
+
+    def on_train_step_begin(self, training_config: BaseTrainerConfig, **kwargs):
+        self.call_event("on_train_step_begin", training_config, **kwargs)
+
+    def on_train_step_end(self, training_config: BaseTrainerConfig, **kwargs):
+        self.call_event("on_train_step_end", training_config, **kwargs)
+
+    def on_eval_step_begin(self, training_config: BaseTrainerConfig, **kwargs):
+        self.call_event("on_eval_step_begin", training_config, **kwargs)
+
+    def on_eval_step_end(self, training_config: BaseTrainerConfig, **kwargs):
+        self.call_event("on_eval_step_end", training_config, **kwargs)
+
+    def on_train_begin(self, training_config: BaseTrainerConfig, **kwargs):
+        self.call_event("on_train_begin", training_config, **kwargs)
+
+    def on_train_end(self, training_config: BaseTrainerConfig, **kwargs):
+        self.call_event("on_train_end", training_config, **kwargs)
+
+    def on_epoch_begin(self, training_config: BaseTrainerConfig, **kwargs):
+        self.call_event("on_epoch_begin", training_config, **kwargs)
+
+    def on_epoch_end(self, training_config: BaseTrainerConfig, **kwargs):
+        self.call_event("on_epoch_end", training_config)
+
+    def on_evaluate(self, training_config: BaseTrainerConfig, **kwargs):
+        self.call_event("on_evaluate", **kwargs)
+
+    def on_save(self, training_config: BaseTrainerConfig, **kwargs):
+        self.call_event("on_save", training_config, **kwargs)
+
+    def on_log(self, training_config: BaseTrainerConfig, logs, **kwargs):
+        self.call_event("on_log", training_config, logs=logs, **kwargs)
+
+    def on_prediction_step(self, training_config: BaseTrainerConfig, **kwargs):
+        self.call_event("on_prediction_step", training_config, **kwargs)
+
+    def call_event(self, event, training_config, **kwargs):
+        for callback in self.callbacks:
+            result = getattr(callback, event)(
+                training_config,
+                model=self.model,
+                optimizer=self.optimizer,
+                scheduler=self.scheduler,
+                **kwargs,
+            )
+
+
+class MetricConsolePrinterCallback(TrainingCallback):
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+
+        # make it print to the console.
+        console = logging.StreamHandler()
+        self.logger.addHandler(console)
+        self.logger.setLevel(logging.INFO)
+
+    def on_log(self, training_config, logs, **kwargs):
+        logger = kwargs.pop("logger", self.logger)
+
+        if logger is not None:
+            epoch_train_loss = logs.get("train_epoch_loss", None)
+            epoch_eval_loss = logs.get("eval_epoch_loss", None)
+
+            logger.info(
+                "--------------------------------------------------------------------------"
+            )
+            if epoch_train_loss is not None:
+                logger.info(f"Train loss: {np.round(epoch_train_loss, 4)}")
+            if epoch_eval_loss is not None:
+                logger.info(f"Eval loss: {np.round(epoch_eval_loss, 4)}")
+            logger.info(
+                "--------------------------------------------------------------------------"
+            )
+
+
+class ProgressBarCallback(TrainingCallback):
+    def __init__(self):
+        self.train_progress_bar = None
+        self.eval_progress_bar = None
+
+    def on_train_step_begin(self, training_config: BaseTrainerConfig, **kwargs):
+        epoch = kwargs.pop("epoch", None)
+        train_loader = kwargs.pop("train_loader", None)
+        if train_loader is not None:
+            self.train_progress_bar = tqdm(
+                total=len(train_loader),
+                unit="batch",
+                desc=f"Training of epoch {epoch}/{training_config.num_epochs}",
+            )
+
+    def on_eval_step_begin(self, training_config: BaseTrainerConfig, **kwargs):
+        epoch = kwargs.pop("epoch", None)
+        eval_loader = kwargs.pop("eval_loader", None)
+        if eval_loader is not None:
+            self.eval_progress_bar = tqdm(
+                total=len(eval_loader),
+                unit="batch",
+                desc=f"Eval of epoch {epoch}/{training_config.num_epochs}",
+            )
+
+    def on_train_step_end(self, training_config, **kwargs):
+        if self.train_progress_bar is not None:
+            self.train_progress_bar.update(1)
+
+    def on_eval_step_end(self, training_config, **kwargs):
+        if self.eval_progress_bar is not None:
+            self.eval_progress_bar.update(1)
+
+    def on_epoch_end(self, training_config, **kwags):
+        if self.train_progress_bar is not None:
+            self.train_progress_bar.close()
+
+        if self.eval_progress_bar is not None:
+            self.eval_progress_bar.close()
+
+
+class WandbCallback(TrainingCallback):  # pragma: no cover
+    def __init__(self):
+        if not wandb_is_available():
+            raise ModuleNotFoundError(
+                "`wandb` package must be installed. Run `pip install wandb`"
+            )
+
+        else:
+            import wandb
+
+            self._wandb = wandb
+
+    def setup(self, training_config, **kwargs):
+        self.is_initialized = True
+
+        model_config = kwargs.pop("model_config", None)
+        project_name = kwargs.pop("project_name", "pythae_benchmarking_vae")
+        entity_name = kwargs.pop("entity_name", None)
+
+        training_config_dict = training_config.to_dict()
+
+        self.run = self._wandb.init(project=project_name, entity=entity_name)
+
+        if model_config is not None:
+            model_config_dict = model_config.to_dict()
+
+            self._wandb.config.update(
+                {
+                    "training_config": training_config_dict,
+                    "model_config": model_config_dict,
+                }
+            )
+
+        else:
+            self._wandb.config.update({**training_config_dict})
+
+        self._wandb.define_metric("train/global_step")
+        self._wandb.define_metric("*", step_metric="train/global_step", step_sync=True)
+
+    def on_train_begin(self, training_config, **kwargs):
+        model_config = kwargs.pop("model_config", None)
+        if not self.is_initialized:
+            self.setup(training_config, model_config=model_config)
+
+    def on_log(self, training_config, logs, **kwargs):
+        global_step = kwargs.pop("global_step", None)
+        logs = rename_logs(logs)
+
+        self._wandb.log({**logs, "train/global_step": global_step})
+
+    def on_prediction_step(self, training_config, **kwargs):
+        global_step = kwargs.pop("global_step", None)
+
+        true_data = kwargs.pop("true_data", None)
+        seen_data = kwargs.pop("seen_data", None)
+        reconstructions = torch.clamp(kwargs.pop("reconstructions", None), 0, 1)
+        generations = torch.clamp(kwargs.pop("generations", None), 0, 1)
+        seq_mask = kwargs.pop("seq_mask", None)
+        pix_mask = kwargs.pop("pix_mask", None)
+
+        if not os.path.exists(os.path.join(self._wandb.run.dir, 'plots')):
+            os.mkdir(os.path.join(self._wandb.run.dir, 'plots'))
+
+
+        lim = reconstructions.shape[1]
+        #if seq_mask[0].sum() < true_data.shape[1] or pix_mask.sum() < np.prod(true_data.shape):
+        #    # reconstruction with missing data
+        #    print('missing')
+        fig, axes = plt.subplots(3*min(4, true_data.shape[0]), lim, figsize=(lim, min(4, true_data.shape[0])*3))
+        for i in range(min(4, true_data.shape[0])):
+            for k in range(lim):
+                axes[3*i][k].imshow(np.moveaxis(reconstructions[i, k].cpu().numpy(), 0, 2), cmap='gray')
+                axes[3*i][k].axis('off')
+                axes[3*i+1][k].imshow(np.moveaxis((seen_data[i, k]).cpu().numpy(), 0, 2), cmap='gray')
+                axes[3*i+1][k].axis('off')
+                axes[3*i+2][k].imshow(np.moveaxis(true_data[i, k].cpu().numpy(), 0, 2), cmap='gray')
+                axes[3*i+2][k].axis('off')
+            plt.tight_layout(pad=0)
+            plt.savefig(os.path.join(self._wandb.run.dir, 'plots', 'reconstruction.png'), bbox_inches='tight')
+
+        self._wandb.log({
+            "missing data": self._wandb.Image(os.path.join(self._wandb.run.dir, 'plots', 'reconstruction.png'))})
+
+        #else:
+        #    # reconstruction
+        #    fig, axes = plt.subplots(2*min(4, true_data.shape[0]), lim, figsize=(lim, 4*2))
+        #    for i in range(min(4, true_data.shape[0])):
+        #        for k in range(lim):
+        #            axes[2*i][k].imshow(np.moveaxis(reconstructions[i, k].cpu().numpy(), 0, 2), cmap='gray')
+        #            axes[2*i][k].axis('off')
+        #            axes[2*i+1][k].imshow(np.moveaxis(true_data[i, k].cpu().numpy(), 0, 2), cmap='gray')
+        #            axes[2*i+1][k].axis('off')
+#
+        #    plt.tight_layout(pad=0)
+        #    plt.savefig(os.path.join(self._wandb.run.dir, 'plots', 'reconstruction.png'), bbox_inches='tight')
+#
+        #    self._wandb.log({
+        #        "reconstructions": self._wandb.Image(os.path.join(self._wandb.run.dir, 'plots', 'reconstruction.png'))})
+#
+        lim = generations.shape[1]
+
+        # generation recon
+        fig, axes = plt.subplots(10, lim, figsize=(lim, 10))
+        for i in range(10):
+            for k in range(lim):
+                axes[i][k].imshow(np.moveaxis(generations[i, k].cpu().numpy(), 0, 2), cmap='gray')
+                axes[i][k].axis('off')
+        plt.tight_layout(pad=0)
+        plt.savefig(os.path.join(self._wandb.run.dir, 'plots', 'generations.png'), bbox_inches='tight')
+
+        self._wandb.log({"generations": self._wandb.Image(os.path.join(self._wandb.run.dir, 'plots', 'generations.png'))})
+
+
+    def on_train_end(self, training_config: BaseTrainerConfig, **kwargs):
+        self.run.finish()
+
+
+class MLFlowCallback(TrainingCallback):  # pragma: no cover
+    def __init__(self):
+        if not mlflow_is_available():
+            raise ModuleNotFoundError(
+                "`mlflow` package must be installed. Run `pip install mlflow`"
+            )
+
+        else:
+            import mlflow
+
+            self._mlflow = mlflow
+
+    def setup(self, training_config, **kwargs):
+        self.is_initialized = True
+
+        model_config = kwargs.pop("model_config", None)
+        run_name = kwargs.pop("run_name", None)
+
+        training_config_dict = training_config.to_dict()
+
+        self._mlflow.start_run(run_name=run_name)
+
+        logger.info(
+            f"MLflow run started with run_id={self._mlflow.active_run().info.run_id}"
+        )
+        if model_config is not None:
+            model_config_dict = model_config.to_dict()
+
+            self._mlflow.log_params(
+                {
+                    **training_config_dict,
+                    **model_config_dict,
+                }
+            )
+
+        else:
+            self._mlflow.log_params({**training_config_dict})
+
+    def on_train_begin(self, training_config, **kwargs):
+        model_config = kwargs.pop("model_config", None)
+        if not self.is_initialized:
+            self.setup(training_config, model_config=model_config)
+
+    def on_log(self, training_config, logs, **kwargs):
+        global_step = kwargs.pop("global_step", None)
+
+        logs = rename_logs(logs)
+        metrics = {}
+        for k, v in logs.items():
+            if isinstance(v, (int, float)):
+                metrics[k] = v
+
+        self._mlflow.log_metrics(metrics=metrics, step=global_step)
+
+    def on_train_end(self, training_config: BaseTrainerConfig, **kwargs):
+        self._mlflow.end_run()
+
+    def __del__(self):
+        # if the previous run is not terminated correctly, the fluent API will
+        # not let you start a new run before the previous one is killed
+        if (
+            callable(getattr(self._mlflow, "active_run", None))
+            and self._mlflow.active_run() is not None
+        ):
+            self._mlflow.end_run()

@@ -1,0 +1,11 @@
+data
+*.npz
+from_jz
+*.png
+*.pt
+from_jz_lvae
+benchmark_VAE/examples/notebooks/jz_models/*
+benchmark_VAE/docs
+__pycache__
+plots
+*.json
