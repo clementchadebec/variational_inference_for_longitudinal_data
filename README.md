@@ -87,6 +87,13 @@ pip install -e .
 ## The data
 The data must be `.pt` files located in the folder named `data` at the root of this repository. The path to load the data can be adapted in the `.py` scripts if needed.
 
+The data can be found (or generated) at the following links
+
+- [Starmen](https://zenodo.org/record/5081988#.ZB_8ONJBxkg)
+- [3D_chairs](https://www.di.ens.fr/willow/research/seeing3Dchairs/)
+- [colorMNIST](https://github.com/akandykeller/TopographicVAE)
+- [Sprites](https://github.com/YingzhenLi/Sprites)
+
 ## Reproducing the results in Table 1 (NLL)
 
 To launch an experiment with the proposed model, you will find a script `lvae_iaf.py` in `lib/scripts`. Run the following command lines to launch a training.
