@@ -68,7 +68,8 @@ Processing Systems Track on Datasets and Benchmarks,
 
 [2] https://github.com/mseitzer/pytorch-fid
 
-**License**
+**License**:
+
 This code is available for illustration purposes only and for replication of the results of the paper *Variational Inference for Longitudinal Data Using Normalising Flows* avaiable at [https://arxiv.org/abs/2303.14220](https://arxiv.org/abs/2303.14220)
 
 
