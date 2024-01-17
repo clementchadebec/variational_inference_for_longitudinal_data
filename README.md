@@ -54,7 +54,6 @@
 <p align="center">
   <b>Generated sequences</b>
 </p>
-	
 
 **Disclaimer**: 
 - The code in `lib` is an adaptation from [1]. In particular, we adapted their implementation of the IAF flows, the VAE and VAMP models and their trainer to plug our method.
@@ -68,6 +67,9 @@ Processing Systems Track on Datasets and Benchmarks,
 
 [2] https://github.com/mseitzer/pytorch-fid
 
+
+**License**
+Proprietary license : This code is available for illustration purposes only and for replication of the results of the paper *Variational Inference for Longitudinal Data Using Normalising Flows* avaiable at [https://arxiv.org/abs/2303.14220](https://arxiv.org/abs/2303.14220)
 
 ## Setup
 
